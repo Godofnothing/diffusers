@@ -132,6 +132,9 @@ class AdaLayerNormZero(nn.Module):
         hidden_dtype: Optional[torch.dtype] = None,
         emb: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        assert any((timestep and class_labels) or emb), (
+            "Modulation embedding has to be provided either via CombinedTimestepLabelEmbeddings or emb argument"
+        )
         if self.emb is not None:
             emb = self.emb(timestep, class_labels, hidden_dtype=hidden_dtype)
         emb = self.linear(self.silu(emb))
@@ -146,14 +149,13 @@ class AdaLayerNormZeroSingle(nn.Module):
 
     Parameters:
         embedding_dim (`int`): The size of each embedding vector.
-        num_embeddings (`int`): The size of the embeddings dictionary.
+        num_embeddings (`int`): The size of the embeddings dictionary (number of channels in emb input).
     """
 
-    def __init__(self, embedding_dim: int, norm_type="layer_norm", bias=True):
+    def __init__(self, embedding_dim: int, num_embeddings: Optional[int] = None, norm_type="layer_norm", bias=True):
         super().__init__()
-
         self.silu = nn.SiLU()
-        self.linear = nn.Linear(embedding_dim, 3 * embedding_dim, bias=bias)
+        self.linear = nn.Linear(num_embeddings or embedding_dim, 3 * embedding_dim, bias=bias)
         if norm_type == "layer_norm":
             self.norm = nn.LayerNorm(embedding_dim, elementwise_affine=False, eps=1e-6)
         else:
@@ -164,7 +166,7 @@ class AdaLayerNormZeroSingle(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        emb: Optional[torch.Tensor] = None,
+        emb: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         emb = self.linear(self.silu(emb))
         shift_msa, scale_msa, gate_msa = emb.chunk(3, dim=1)
@@ -195,7 +197,6 @@ class LuminaRMSNormZero(nn.Module):
         x: torch.Tensor,
         emb: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        # emb = self.emb(timestep, encoder_hidden_states, encoder_mask)
         emb = self.linear(self.silu(emb))
         scale_msa, gate_msa, scale_mlp, gate_mlp = emb.chunk(4, dim=1)
         x = self.norm(x) * (1 + scale_msa[:, None])
